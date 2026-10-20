@@ -41,11 +41,13 @@
 
 # Resurse low-poly
 
-16 resurse generate de `ResourceBuilder.lua`, toate din piese Roblox (fără mesh-uri externe), de ~1–1.6 studs:
+16 resurse generate de `ResourceBuilder.lua`, în stil low-poly fațetat, de ~1–2 studs. Nu folosesc mesh-uri externe: fiecare fațetă e un triunghi real, făcut din două `WedgePart` subțiri, plus câteva prisme octogonale.
 
 ![resurse](docs/resources-preview.png)
 
-*Previzualizare randată în afara Roblox. În Studio, părțile Neon strălucesc, iar Gel, Ashes, Stardust, Essence și Cosmic Shard au PointLight și, unele, particule.*
+*Previzualizare randată în afara Roblox, din aceleași date ale pieselor. În Studio, Luminescent Gel, Stardust, Essence și Cosmic Shard au în plus PointLight, iar unele au și particule.*
+
+Fiecare model are între ~50 și ~210 piese: Forest Berries ~210, Wool ~185, Essence ~140, restul sub ~120. Piesele sunt ancorate, fără coliziuni și fără query, deci sunt ieftine. Totuși, dacă ai sute de drop-uri pe hartă în același timp, merită folosite mesh-uri.
 
 ## Instalare
 
