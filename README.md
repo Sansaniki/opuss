@@ -36,3 +36,34 @@
 - Fața **-Z** stă pe spatele personajului, iar fața **+Z** (buzunarele) e spre exterior.
 - Atribute: `Tier`, `Capacity`, `Rarity`, `MountHeight` (cât de sus/jos stă pe spate, în studs; ajustează dacă avatarele tale au altă scară).
 - Toate piesele au `CanCollide`, `CanTouch` și `CanQuery` = false, plus `Massless` = true, ca să nu afecteze mișcarea personajului.
+
+---
+
+# Resurse low-poly
+
+16 resurse generate de `ResourceBuilder.lua`, toate din piese Roblox (fără mesh-uri externe), de ~1–1.6 studs:
+
+![resurse](docs/resources-preview.png)
+
+*Previzualizare randată în afara Roblox. În Studio, părțile Neon strălucesc, iar Gel, Ashes, Stardust, Essence și Cosmic Shard au PointLight și, unele, particule.*
+
+## Instalare
+
+În Studio deschizi View → Command Bar, lipești tot conținutul din `ResourceBuilder.lua` și apeși Enter. Modelele apar în `ReplicatedStorage.Resources`, cu numele = cheia din tabel. Ce apare în `Workspace.ResourceShowcase` e doar preview și îl poți șterge.
+
+În tabelul de resurse pui numele modelului:
+
+```lua
+Feather = { DisplayName = "Feather", SellPrice = 3, Weight = 0.05, Icon = "", Model = "Feather" },
+-- ... la fel pentru Wool, Milk, Berry, Honey, Truffle, Fur, Claw, Scale, Shell, Horn, Gel, Ashes, Stardust, Essence, Shard
+```
+
+și îl clonezi așa:
+
+```lua
+local model = ReplicatedStorage.Resources[def.Model]:Clone()
+model:PivotTo(CFrame.new(pos + Vector3.new(0, model.PrimaryPart.Size.Y / 2, 0))) -- pus pe sol
+model.Parent = workspace
+```
+
+`PrimaryPart` = `Handle` este invizibil, cât tot modelul și centrat. Toate piesele sunt sudate de el și sunt Anchored în template; pentru un drop care cade, setează `Anchored = false` pe piese. Fiecare model are atributul `ResourceId`.
