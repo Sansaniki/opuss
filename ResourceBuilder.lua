@@ -13,6 +13,7 @@
 	    pentru a-l pune pe sol: model:PivotTo(CFrame.new(pos + Vector3.new(0, model.Handle.Size.Y / 2, 0)));
 	  • toate piesele sunt sudate (WeldConstraint) de Handle, Anchored = true în template;
 	  • atribut ResourceId = cheia din tabel.
+	Fațetele sunt triunghiuri reale, fiecare făcut din două WedgePart subțiri.
 	Rularea din nou înlocuiește modelele vechi.
 ]]
 
@@ -22,6 +23,8 @@ local M = Enum.Material
 local V = Vector3.new
 local rad = math.rad
 local PI = math.pi
+local COS8 = math.cos(PI / 8) -- apotema / raza unui octogon
+local T = 0.03 -- grosimea unui triunghi
 
 local function rgb(r, g, b)
 	return Color3.fromRGB(r, g, b)
@@ -35,8 +38,6 @@ local function at(x, y, z)
 	return CFrame.new(x, y, z)
 end
 
--- Cilindrii Roblox au axa pe X: FWD o întoarce spre Z.
-local FWD = CFrame.Angles(0, rad(90), 0)
 -- Octogoanele se construiesc în planul XY; VERT le culcă orizontal (prismă pe Y).
 local VERT = CFrame.Angles(PI / 2, 0, 0)
 
@@ -48,6 +49,19 @@ local function rng(seed)
 		return a + (b - a) * (s / 2147483647)
 	end
 end
+
+local PHI = (1 + math.sqrt(5)) / 2
+local ICO_V = {
+	V(-1, PHI, 0), V(1, PHI, 0), V(-1, -PHI, 0), V(1, -PHI, 0),
+	V(0, -1, PHI), V(0, 1, PHI), V(0, -1, -PHI), V(0, 1, -PHI),
+	V(PHI, 0, -1), V(PHI, 0, 1), V(-PHI, 0, -1), V(-PHI, 0, 1),
+}
+local ICO_F = {
+	{ 1, 12, 6 }, { 1, 6, 2 }, { 1, 2, 8 }, { 1, 8, 11 }, { 1, 11, 12 },
+	{ 2, 6, 10 }, { 6, 12, 5 }, { 12, 11, 3 }, { 11, 8, 7 }, { 8, 2, 9 },
+	{ 4, 10, 5 }, { 4, 5, 3 }, { 4, 3, 7 }, { 4, 7, 9 }, { 4, 9, 10 },
+	{ 5, 10, 6 }, { 3, 5, 12 }, { 7, 3, 11 }, { 9, 7, 8 }, { 10, 9, 2 },
+}
 
 local function makePart(parent, className, name, size, cf, color, material, props)
 	local p = Instance.new(className)
@@ -72,7 +86,7 @@ local function makePart(parent, className, name, size, cf, color, material, prop
 	return p
 end
 
-local function newItem(id)
+local function newItem(id, seed)
 	local model = Instance.new("Model")
 	model.Name = id
 
@@ -83,27 +97,18 @@ local function newItem(id)
 	model.PrimaryPart = handle
 	model:SetAttribute("ResourceId", id)
 
-	local b = { model = model, handle = handle }
+	local rand = rng(seed)
+	-- cât variază luminozitatea între fațete (dă aspectul low-poly)
+	local b = { model = model, handle = handle, rand = rand, jit = 0.05 }
+
+	local function vary(c, amt)
+		local k = 1 + rand(-amt, amt)
+		return Color3.new(math.clamp(c.R * k, 0, 1), math.clamp(c.G * k, 0, 1), math.clamp(c.B * k, 0, 1))
+	end
+	b.vary = vary
 
 	function b.box(name, size, cf, color, mat, props)
 		return makePart(model, "Part", name, size, cf, color, mat, props)
-	end
-
-	-- WedgePart: fața înclinată coboară spre -Z.
-	function b.wedge(name, size, cf, color, mat, props)
-		return makePart(model, "WedgePart", name, size, cf, color, mat, props)
-	end
-
-	function b.cyl(name, length, diameter, cf, color, mat, props)
-		props = table.clone(props or {})
-		props.Shape = Enum.PartType.Cylinder
-		return makePart(model, "Part", name, V(length, diameter, diameter), cf, color, mat, props)
-	end
-
-	function b.ball(name, diameter, cf, color, mat, props)
-		props = table.clone(props or {})
-		props.Shape = Enum.PartType.Ball
-		return makePart(model, "Part", name, V(diameter, diameter, diameter), cf, color, mat, props)
 	end
 
 	-- Octogon = 4 benzi rotite la 0/45/90/135°, în planul XY al lui cf, gros pe Z.
@@ -117,54 +122,170 @@ local function newItem(id)
 		return first
 	end
 
-	-- Prismă octogonală pe axa Y a lui cf (fețe plate spre ±X și ±Z).
+	-- Prismă octogonală pe axa Y a lui cf (colțurile la 22.5° + k·45°, la fel ca lathe cu n = 8).
 	function b.prism(name, apothem, height, cf, color, mat, props)
 		return b.octagon(name, apothem, height, cf * VERT, color, mat, props)
 	end
 
-	-- Stea cu 8 colțuri = două pătrate rotite la 45°, în planul XY al lui cf.
-	function b.star(name, radius, thickness, cf, color, mat, props)
-		local s = V(radius * 2, radius * 2, thickness)
-		local first = b.box(name, s, cf, color, mat, props)
-		b.box(name, s, cf * CFrame.Angles(0, 0, PI / 4), color, mat, props)
-		return first
+	-- Bilă fațetată ieftină: trei cuburi rotite diferit.
+	function b.fball(name, d, cf, color, mat, props)
+		local s = V(d * 0.72, d * 0.72, d * 0.72)
+		local spin = cf * CFrame.Angles(rand(0, PI), rand(0, PI), rand(0, PI))
+		b.box(name, s, spin, color, mat, props)
+		b.box(name, s, spin * CFrame.Angles(PI / 4, PI / 4, 0), vary(color, 0.04), mat, props)
+		b.box(name, s, spin * CFrame.Angles(0, PI / 4, PI / 4), vary(color, 0.04), mat, props)
 	end
 
-	-- „Bilă” fațetată low-poly = două cuburi suprapuse, rotite.
-	function b.gem(name, d, cf, color, mat, props)
-		local s = V(d * 0.8, d * 0.8, d * 0.8)
-		local first = b.box(name, s, cf, color, mat, props)
-		b.box(name, s, cf * CFrame.Angles(PI / 4, PI / 4, 0), color, mat, props)
-		return first
-	end
-
-	function b.chunk(name, size, cf, color, mat, rand, maxAngle)
+	function b.chunk(name, size, cf, color, mat, maxAngle)
 		local a = maxAngle or PI
 		return b.box(name, size, cf * CFrame.Angles(rand(-a, a), rand(-a, a), rand(-a, a)), color, mat)
 	end
 
-	-- Cristal: corp cu secțiune romb + vârf în două ape. Baza e la originea lui cf, crește pe Y.
-	function b.crystal(name, w, h, tip, cf, color, mat, props)
-		local c = cf * CFrame.Angles(0, PI / 4, 0)
-		local body = b.box(name, V(w, h, w), c * at(0, h / 2, 0), color, mat, props)
-		b.wedge(name, V(w, tip, w / 2), c * at(0, h + tip / 2, -w / 4), color, mat, props)
-		b.wedge(name, V(w, tip, w / 2), c * at(0, h + tip / 2, w / 4) * CFrame.Angles(0, PI, 0), color, mat, props)
-		return body
+	-- Bară între două puncte.
+	function b.rod(name, p0, p1, w, color, mat, props)
+		local d = p1 - p0
+		local up = d.Unit
+		local ref = math.abs(up.Z) > 0.95 and V(1, 0, 0) or V(0, 0, 1)
+		local x = up:Cross(ref).Unit
+		local z = x:Cross(up)
+		return b.box(name, V(w, d.Magnitude, w), CFrame.fromMatrix((p0 + p1) / 2, x, up, z), color, mat, props)
 	end
 
-	-- Inel de n blocuri pe un cerc orizontal; tilt > 0 apleacă partea de sus spre exterior.
-	function b.ring(name, n, radius, y, size, color, mat, tilt, phase, color2)
-		for i = 0, n - 1 do
-			local a = (phase or 0) + i * 2 * PI / n
-			local cf = at(radius * math.cos(a), y, radius * math.sin(a))
-				* CFrame.Angles(0, PI / 2 - a, 0)
-				* CFrame.Angles(tilt or 0, 0, 0)
-			b.box(name, size, cf, (color2 and i % 2 == 1) and color2 or color, mat)
+	-- Triunghi oarecare din două WedgePart (tehnica clasică Roblox).
+	function b.tri(name, a, bb, c, color, mat, props)
+		local ab, ac, bc = bb - a, c - a, c - bb
+		local abd, acd, bcd = ab:Dot(ab), ac:Dot(ac), bc:Dot(bc)
+		if abd > acd and abd > bcd then
+			c, a = a, c
+		elseif acd > bcd and acd > abd then
+			a, bb = bb, a
+		end
+		ab, ac, bc = bb - a, c - a, c - bb
+		local n = ac:Cross(ab)
+		if n.Magnitude < 1e-6 then
+			return
+		end
+		local right = n.Unit
+		local up = bc:Cross(right).Unit
+		local back = bc.Unit
+		local h = math.abs(ab:Dot(up))
+		local d1, d2 = math.abs(ab:Dot(back)), math.abs(ac:Dot(back))
+		if h < 0.002 then
+			return
+		end
+		if d1 > 0.002 then
+			makePart(model, "WedgePart", name, V(T, h, d1), CFrame.fromMatrix((a + bb) / 2, right, up, back), color, mat, props)
+		end
+		if d2 > 0.002 then
+			makePart(model, "WedgePart", name, V(T, h, d2), CFrame.fromMatrix((a + c) / 2, -right, up, -back), color, mat, props)
 		end
 	end
 
+	-- paint = Color3 sau function(centruFațetă) -> Color3; fiecare fațetă primește o mică variație.
+	function b.face(name, p1, p2, p3, paint, mat, props)
+		local c = paint
+		if type(paint) == "function" then
+			c = paint((p1 + p2 + p3) / 3)
+		end
+		b.tri(name, p1, p2, p3, vary(c, b.jit), mat, props)
+	end
+
+	function b.mesh(name, verts, faces, cf, paint, mat, props)
+		local w = {}
+		for i, v in ipairs(verts) do
+			w[i] = cf * v
+		end
+		for _, f in ipairs(faces) do
+			b.face(name, w[f[1]], w[f[2]], w[f[3]], paint, mat, props)
+		end
+	end
+
+	-- Piatră / bulgăre: icosaedru deformat aleator.
+	function b.lumpy(name, cf, radii, jitter, paint, mat, props)
+		local verts = {}
+		for i, v in ipairs(ICO_V) do
+			local u = v.Unit * (1 + rand(-jitter, jitter))
+			verts[i] = V(u.X * radii.X, u.Y * radii.Y, u.Z * radii.Z)
+		end
+		b.mesh(name, verts, ICO_F, cf, paint, mat, props)
+	end
+
+	-- Corp de revoluție cu n laturi; profile = {{raza, y}, ...}, raza 0 = vârf.
+	function b.lathe(name, cf, profile, n, paint, mat, props, phase)
+		phase = phase or PI / n
+		local function pt(r, y, k)
+			local a = phase + k * 2 * PI / n
+			return cf * V(r * math.cos(a), y, r * math.sin(a))
+		end
+		for i = 1, #profile - 1 do
+			local r1, y1 = profile[i][1], profile[i][2]
+			local r2, y2 = profile[i + 1][1], profile[i + 1][2]
+			for k = 0, n - 1 do
+				local p1, p2 = pt(r1, y1, k), pt(r1, y1, k + 1)
+				local q1, q2 = pt(r2, y2, k), pt(r2, y2, k + 1)
+				if r1 == 0 then
+					b.face(name, p1, q1, q2, paint, mat, props)
+				elseif r2 == 0 then
+					b.face(name, p1, p2, q1, paint, mat, props)
+				else
+					b.face(name, p1, p2, q2, paint, mat, props)
+					b.face(name, p1, q2, q1, paint, mat, props)
+				end
+			end
+		end
+	end
+
+	-- Movilă neregulată: vârf + inele de puncte cu jitter, cusute cu triunghiuri.
+	-- rings = {{n, raza, y, jitterRaza, jitterY, faza}, ...}; stretch lățește pe X.
+	function b.mound(name, cf, apex, rings, stretch, paint, mat, props)
+		local pts = {}
+		for ri, r in ipairs(rings) do
+			local ring = {}
+			for k = 0, r[1] - 1 do
+				local a = (r[6] or 0) + k * 2 * PI / r[1]
+				local rr = r[2] * (1 + rand(-r[4], r[4]))
+				ring[k + 1] = cf * V(rr * math.cos(a) * stretch, r[3] + rand(-r[5], r[5]), rr * math.sin(a))
+			end
+			pts[ri] = ring
+		end
+		local top = cf * apex
+		local first = pts[1]
+		for k = 1, #first do
+			b.face(name, top, first[k], first[k % #first + 1], paint, mat, props)
+		end
+		for ri = 1, #pts - 1 do
+			local A, B = pts[ri], pts[ri + 1]
+			local nA, nB = #A, #B
+			local i, j = 0, 0
+			while i < nA or j < nB do
+				local advanceA
+				if i >= nA then
+					advanceA = false
+				elseif j >= nB then
+					advanceA = true
+				else
+					advanceA = (i + 1) / nA <= (j + 1) / nB
+				end
+				if advanceA then
+					b.face(name, A[i % nA + 1], A[(i + 1) % nA + 1], B[j % nB + 1], paint, mat, props)
+					i += 1
+				else
+					b.face(name, A[i % nA + 1], B[(j + 1) % nB + 1], B[j % nB + 1], paint, mat, props)
+					j += 1
+				end
+			end
+		end
+	end
+
+	-- Romb plat (sclipici).
+	function b.diamond(name, cf, w, h, color, mat, props)
+		local t, r, bt, l = cf * V(0, h / 2, 0), cf * V(w / 2, 0, 0), cf * V(0, -h / 2, 0), cf * V(-w / 2, 0, 0)
+		b.tri(name, t, r, l, color, mat, props)
+		b.tri(name, bt, l, r, color, mat, props)
+	end
+
 	-- Arc în planul XY al lui root: pornește în sus și se curbează spre +X.
-	-- fn(i, t, cf, segLen) primește cadrul fiecărui segment (Y = tangenta, +X = interiorul curbei).
+	-- fn(i, t, cf, segLen) primește cadrul fiecărui segment (Y = tangenta).
 	function b.sweep(root, radius, arcDeg, n, fn)
 		local arc = rad(arcDeg)
 		local segLen = radius * arc / n
@@ -248,483 +369,428 @@ local function finalize(b)
 	return b.model
 end
 
--- Pană: lamele care urmează un arc ușor; colorAt(i, n) dă culoarea fiecărui segment.
-local function featherShape(b, root, length, colorAt, matAt)
-	local n = 12
-	local width = length * 0.32
-	b.sweep(root * CFrame.Angles(0, PI, 0), length * 2.4, math.deg(1 / 2.4), n, function(i, t, cf, seg)
-		b.box("Quill", V(length * 0.035, seg * 1.1, length * 0.035), cf, rgb(236, 226, 200), M.SmoothPlastic)
-		if t > 0.16 then
-			local u = (t - 0.16) / 0.84
-			local w = width * math.sin(PI * (0.08 + 0.84 * u)) ^ 0.7
-			-- partea din față a lamei e mai îngustă, ca la o pană reală
-			b.box("Vane", V(w, seg * 1.08, length * 0.02), cf * at(w * 0.08, 0, 0), colorAt(i, n), matAt and matAt(i, n) or M.SmoothPlastic)
-		end
-	end)
-end
-
 ---------------------------------------------------------------------------
 
 local function buildFeather()
-	local b = newItem("Feather")
-	local L = 1.6
-	local root = CFrame.Angles(0, 0, rad(-20))
-	local white, blue, deep = rgb(250, 250, 246), rgb(160, 200, 236), rgb(70, 112, 176)
-	local rand = rng(3)
+	local b = newItem("Feather", 3)
+	b.jit = 0.02
+	local L, N, t0 = 1.6, 8, 0.12
+	local root = CFrame.Angles(0, 0, rad(-40))
+	local white, shade = rgb(250, 250, 252), rgb(222, 226, 236)
+	local notch = { [-1] = { [5] = true }, [1] = { [3] = true, [6] = true } }
 
-	featherShape(b, root, L, function(i, n)
-		if i == n then
-			return deep
-		elseif i >= n - 3 then
-			return (n - i) % 2 == 1 and blue or white
+	local function spine(t)
+		return root * V(0.1 * L * t * t, L * t, 0)
+	end
+	local function spineT(i)
+		return t0 + (1 - t0) * i / N
+	end
+	-- marginea lamei: barbele urcă spre vârf, iar marginile sunt trase puțin în spate (pliu în V)
+	local function edge(i, side)
+		local u = i / N
+		local w = (side < 0 and 0.3 or 0.24) * math.sin(PI * u ^ 0.8) ^ 0.6
+		if notch[side][i] then
+			w *= 0.55
 		end
-		return white
-	end)
+		local t = math.min(spineT(i) + 0.3 * w / L, 1)
+		return root * V(0.1 * L * t * t + side * w, L * t, -0.18 * w)
+	end
 
-	for _, s in ipairs({ -1, 1 }) do
-		b.chunk("Down", V(0.12, 0.12, 0.12), root * at(s * 0.07, L * 0.2, 0), white, M.Fabric, rand)
+	for _, side in ipairs({ -1, 1 }) do
+		local col = side < 0 and white or shade
+		for i = 0, N - 1 do
+			local s0, s1 = spine(spineT(i)), spine(spineT(i + 1))
+			local e0, e1 = edge(i, side), edge(i + 1, side)
+			b.face("Vane", s0, e0, e1, col)
+			b.face("Vane", s0, e1, s1, col)
+		end
+	end
+
+	b.rod("Quill", spine(-0.24), spine(t0 + 0.04), 0.055, rgb(206, 160, 98))
+	for i = 0, N - 2 do
+		b.rod("Rachis", spine(spineT(i)), spine(spineT(i + 1)), 0.03, rgb(236, 230, 214))
 	end
 
 	return finalize(b)
 end
 
 local function buildWool()
-	local b = newItem("Wool")
-	local rand = rng(7)
-	local cols = { rgb(246, 242, 232), rgb(234, 227, 212), rgb(252, 250, 244) }
+	local b = newItem("Wool", 7)
+	local cols = { rgb(246, 243, 236), rgb(232, 227, 216), rgb(252, 251, 247) }
 
-	b.chunk("Fluff", V(0.62, 0.62, 0.62), at(0, 0.42, 0), cols[1], M.Fabric, rand)
-	for i = 0, 6 do
-		local a = i * 2 * PI / 7
-		local s = rand(0.42, 0.52)
-		b.chunk("Fluff", V(s, s, s), at(0.4 * math.cos(a), 0.28 + rand(-0.04, 0.06), 0.4 * math.sin(a)), cols[i % 3 + 1], M.Fabric, rand)
+	b.fball("Wool", 0.82, at(0, 0, 0), cols[1])
+	for i = 1, 10 do
+		local y = 1 - (i - 0.5) / 10 * 1.6
+		local r = math.sqrt(1 - y * y)
+		local a = i * 2.39996
+		b.fball("Wool", b.rand(0.42, 0.56), at(math.cos(a) * r * 0.42, y * 0.36, math.sin(a) * r * 0.42), cols[i % 3 + 1])
 	end
-	for i = 0, 2 do
-		local a = i * 2 * PI / 3 + 0.5
-		b.chunk("Fluff", V(0.4, 0.4, 0.4), at(0.2 * math.cos(a), 0.68, 0.2 * math.sin(a)), cols[(i + 1) % 3 + 1], M.Fabric, rand)
-	end
-
-	-- capăt de fir care se încolăcește din ghem
-	b.sweep(at(0.62, 0.15, 0.1) * CFrame.Angles(0, rad(-30), rad(-100)), 0.12, 260, 7, function(_, _, cf, seg)
-		b.box("Strand", V(0.06, seg * 1.25, 0.06), cf, cols[2], M.Fabric)
-	end)
 
 	return finalize(b)
 end
 
 local function buildMilk()
-	local b = newItem("Milk")
-	local white = rgb(248, 248, 245)
-	local blue, light = rgb(70, 130, 210), rgb(150, 195, 240)
+	local b = newItem("Milk", 9)
+	b.jit = 0.03
+	local glass, gp = rgb(196, 224, 244), { Transparency = 0.55 }
+	local cork, corkTop = rgb(180, 116, 62), rgb(206, 146, 86)
 
-	b.prism("Bottle", 0.34, 0.95, at(0, 0.475, 0), white)
-	b.prism("Shoulder", 0.27, 0.14, at(0, 1.0, 0) * CFrame.Angles(0, PI / 8, 0), white)
-	b.prism("Neck", 0.18, 0.22, at(0, 1.17, 0), white)
-	b.prism("Lip", 0.21, 0.06, at(0, 1.29, 0) * CFrame.Angles(0, PI / 8, 0), white)
-	b.prism("Cap", 0.215, 0.1, at(0, 1.35, 0), blue)
-	b.prism("CapTop", 0.17, 0.03, at(0, 1.41, 0) * CFrame.Angles(0, PI / 8, 0), light)
-
-	b.prism("Label", 0.355, 0.38, at(0, 0.46, 0), blue)
-	b.prism("LabelStripe", 0.36, 0.05, at(0, 0.68, 0), light)
-	b.prism("LabelStripe", 0.36, 0.05, at(0, 0.24, 0), light)
-
-	-- picătură de lapte pe etichetă
-	b.box("Drop", V(0.13, 0.13, 0.03), at(0, 0.52, 0.36) * CFrame.Angles(0, 0, PI / 4), white)
-	b.cyl("Drop", 0.03, 0.17, at(0, 0.45, 0.36) * FWD, white)
+	b.prism("Glass", 0.34, 0.8, at(0, 0.4, 0), glass, M.Glass, gp)
+	b.prism("Milk", 0.31, 0.6, at(0, 0.32, 0), rgb(250, 248, 242))
+	b.prism("MilkTop", 0.25, 0.02, at(0, 0.625, 0) * CFrame.Angles(0, PI / 8, 0), rgb(255, 255, 255))
+	b.lathe("Glass", CFrame.new(), { { 0.34 / COS8, 0.8 }, { 0.15 / COS8, 0.98 } }, 8, glass, M.Glass, gp)
+	b.prism("Neck", 0.15, 0.2, at(0, 1.08, 0), glass, M.Glass, gp)
+	b.prism("Lip", 0.18, 0.06, at(0, 1.17, 0), glass, M.Glass, gp)
+	b.prism("Cork", 0.13, 0.16, at(0, 1.22, 0), cork)
+	b.prism("CorkTop", 0.165, 0.12, at(0, 1.34, 0), cork)
+	b.prism("CorkCap", 0.13, 0.02, at(0, 1.405, 0) * CFrame.Angles(0, PI / 8, 0), corkTop)
 
 	return finalize(b)
 end
 
 local function buildBerry()
-	local b = newItem("Berry")
-	local leaf, vein, twig = rgb(86, 156, 64), rgb(56, 112, 42), rgb(110, 74, 44)
-	local red, red2 = rgb(204, 38, 62), rgb(170, 26, 50)
-	local blue, blue2 = rgb(64, 74, 158), rgb(46, 54, 124)
-
-	local function addLeaf(cf)
-		b.box("Leaf", V(0.28, 0.03, 0.5), cf, leaf, M.Grass)
-		for _, s in ipairs({ -1, 1 }) do
-			b.box("LeafTip", V(0.2, 0.03, 0.2), cf * at(0, 0, s * 0.25) * CFrame.Angles(0, PI / 4, 0), leaf, M.Grass)
-		end
-		b.box("Vein", V(0.03, 0.04, 0.62), cf, vein, M.Grass)
-	end
-	addLeaf(at(-0.3, 0.05, -0.05) * CFrame.Angles(0, rad(30), 0) * CFrame.Angles(rad(-10), 0, 0))
-	addLeaf(at(0.3, 0.05, 0.08) * CFrame.Angles(0, rad(-40), 0) * CFrame.Angles(rad(10), 0, 0))
-
+	local b = newItem("Berry", 11)
+	b.jit = 0.03
+	local reds = { rgb(226, 32, 44), rgb(204, 22, 36), rgb(238, 52, 58) }
 	local berries = {
-		{ 0, 0.2, 0, red },
-		{ 0.2, 0.17, 0.08, blue },
-		{ -0.18, 0.17, 0.1, blue2 },
-		{ 0.05, 0.17, -0.2, red2 },
-		{ -0.08, 0.38, -0.02, red },
-		{ 0.12, 0.36, 0.04, blue },
-		{ 0.02, 0.17, 0.24, red2 },
+		{ -0.27, 0.19, 0.08 },
+		{ 0.02, 0.16, 0.18 },
+		{ 0.3, 0.2, 0.05 },
+		{ -0.12, 0.46, -0.02 },
+		{ 0.18, 0.47, -0.06 },
 	}
-	for _, br in ipairs(berries) do
-		b.gem("Berry", 0.25, at(br[1], br[2], br[3]), br[4])
-		if br[4] == blue or br[4] == blue2 then
-			b.box("Crown", V(0.07, 0.04, 0.07), at(br[1], br[2] + 0.11, br[3]), rgb(30, 30, 60))
-		end
+	for i, p in ipairs(berries) do
+		b.fball("Berry", 0.36, at(p[1], p[2], p[3]), reds[i % 3 + 1])
 	end
 
-	b.box("Twig", V(0.04, 0.28, 0.04), at(0.0, 0.55, 0) * CFrame.Angles(0, 0, rad(-15)), twig, M.Wood)
-	b.box("TopLeaf", V(0.16, 0.025, 0.24), at(0.07, 0.68, 0.02) * CFrame.Angles(rad(20), rad(30), rad(-25)), leaf, M.Grass)
+	-- frunză în formă de romb, cu nervura ridicată: jumătatea stângă și dreaptă au nuanțe diferite
+	local function leaf(base, tip, width)
+		local dir = tip - base
+		local n = V(0, 0.25, 1).Unit
+		local perp = dir:Cross(n).Unit * width
+		local mid = base + dir * 0.42 + n * 0.04
+		local left = base + dir * 0.4 - perp - n * 0.05
+		local right = base + dir * 0.4 + perp - n * 0.05
+		local g1, g2 = rgb(74, 172, 72), rgb(40, 124, 50)
+		b.face("Leaf", base, left, mid, g1)
+		b.face("Leaf", mid, left, tip, g1)
+		b.face("Leaf", base, mid, right, g2)
+		b.face("Leaf", mid, tip, right, g2)
+	end
+	leaf(V(-0.1, 0.5, -0.12), V(-0.62, 0.92, -0.2), 0.17)
+	leaf(V(0.12, 0.55, -0.15), V(0.55, 1.05, -0.22), 0.2)
 
 	return finalize(b)
 end
 
 local function buildHoney()
-	local b = newItem("Honey")
-	local honey, rim, drip = rgb(232, 150, 30), rgb(250, 212, 130), rgb(255, 184, 40)
-	local cloth, white, twine = rgb(200, 60, 52), rgb(250, 246, 238), rgb(200, 170, 120)
+	local b = newItem("Honey", 13)
+	local cloth, string = rgb(222, 190, 140), rgb(112, 70, 40)
 
-	b.prism("Jar", 0.42, 0.78, at(0, 0.39, 0), honey, M.SmoothPlastic, { Reflectance = 0.1 })
-	b.prism("Rim", 0.36, 0.08, at(0, 0.82, 0), rim)
+	b.lathe("Jar", CFrame.new(), { { 0.36, 0 }, { 0.47, 0.36 }, { 0.34, 0.7 } }, 8, function(p)
+		return p.Y < 0.36 and rgb(236, 140, 18) or rgb(250, 172, 40)
+	end, M.SmoothPlastic, { Reflectance = 0.05 })
+	b.prism("JarBottom", 0.36 * COS8, 0.03, at(0, 0.015, 0), rgb(220, 124, 12))
+	b.prism("JarNeck", 0.31 * COS8, 0.12, at(0, 0.76, 0), rgb(250, 172, 40))
 
-	-- pânză cadrilată legată cu sfoară
-	b.ring("ClothSkirt", 8, 0.44, 0.8, V(0.36, 0.2, 0.03), cloth, M.Fabric, rad(18), 0)
-	b.star("Cloth", 0.4, 0.04, at(0, 0.9, 0) * VERT, cloth, M.Fabric)
-	for ix = -1, 1 do
-		for iz = -1, 1 do
-			if (ix + iz) % 2 == 0 then
-				b.box("Check", V(0.17, 0.045, 0.17), at(ix * 0.17, 0.9, iz * 0.17), white, M.Fabric)
-			end
-		end
+	-- pânza: capac octogonal + fustă cu tiv zimțat
+	b.prism("Cloth", 0.36 * COS8, 0.05, at(0, 0.86, 0), cloth, M.Fabric)
+	local top, hem = {}, {}
+	for k = 0, 7 do
+		local a = PI / 8 + k * PI / 4
+		top[k + 1] = V(0.36 * math.cos(a), 0.86, 0.36 * math.sin(a))
+		local ah = a + PI / 8
+		local hy = k % 2 == 0 and 0.6 or 0.68
+		hem[k + 1] = V(0.47 * math.cos(ah), hy, 0.47 * math.sin(ah))
 	end
-	b.prism("Twine", 0.455, 0.05, at(0, 0.8, 0), twine, M.Fabric)
-
-	-- miere scursă pe borcan
-	b.box("Drip", V(0.08, 0.28, 0.04), at(-0.15, 0.62, 0.43), drip)
-	b.ball("Drip", 0.1, at(-0.15, 0.48, 0.43), drip)
-	b.box("Drip", V(0.07, 0.16, 0.04), at(0.13, 0.68, 0.43), drip)
-	b.ball("Drip", 0.09, at(0.13, 0.6, 0.43), drip)
-
-	b.box("Label", V(0.32, 0.26, 0.03), at(0, 0.3, 0.425), rgb(245, 232, 200))
-	b.octagon("LabelHex", 0.07, 0.02, at(0, 0.3, 0.44) * CFrame.Angles(0, 0, PI / 8), honey)
-
-	-- albină pe capac
-	local bee = at(0.18, 0.97, 0.14) * CFrame.Angles(0, rad(30), 0)
-	b.box("Bee", V(0.16, 0.1, 0.1), bee, rgb(250, 200, 40))
-	for _, x in ipairs({ -0.03, 0.03 }) do
-		b.box("BeeStripe", V(0.025, 0.105, 0.105), bee * at(x, 0, 0), rgb(30, 26, 22))
+	for k = 1, 8 do
+		local k2 = k % 8 + 1
+		b.face("Cloth", top[k], top[k2], hem[k], cloth, M.Fabric)
+		b.face("Cloth", top[k2], hem[k], hem[k2], cloth, M.Fabric)
 	end
-	b.box("BeeHead", V(0.07, 0.08, 0.08), bee * at(0.1, 0, 0), rgb(30, 26, 22))
+
+	-- sfoară + fundă în față
+	b.prism("String", 0.39, 0.04, at(0, 0.79, 0), string, M.Fabric)
 	for _, s in ipairs({ -1, 1 }) do
-		b.box("BeeWing", V(0.07, 0.015, 0.1), bee * at(-0.01, 0.06, s * 0.06) * CFrame.Angles(rad(-20 * s), 0, 0), white, M.SmoothPlastic, { Transparency = 0.3 })
+		b.box("Bow", V(0.12, 0.07, 0.03), at(s * 0.065, 0.8, 0.42) * CFrame.Angles(0, 0, rad(25 * s)), string, M.Fabric)
+		b.rod("BowTail", V(s * 0.02, 0.78, 0.42), V(s * 0.08, 0.66, 0.45), 0.025, string, M.Fabric)
 	end
+	b.box("Knot", V(0.05, 0.05, 0.04), at(0, 0.79, 0.43), string, M.Fabric)
 
 	return finalize(b)
 end
 
 local function buildTruffle()
-	local b = newItem("Truffle")
-	local rand = rng(23)
-	local cols = { rgb(72, 50, 38), rgb(58, 40, 30), rgb(90, 64, 46) }
+	local b = newItem("Truffle", 17)
+	b.jit = 0.12
+	local dark, rim = rgb(68, 46, 36), rgb(58, 40, 30)
 
-	b.chunk("Truffle", V(0.6, 0.52, 0.58), at(0, 0.3, 0), cols[1], M.Slate, rand)
-	for i = 1, 9 do
-		local a = rand(0, 2 * PI)
-		local e = rand(-0.2, 1.0)
-		local s = rand(0.2, 0.32)
-		local pos = at(0.27 * math.cos(a) * math.cos(e), 0.3 + 0.22 * math.sin(e), 0.27 * math.sin(a) * math.cos(e))
-		b.chunk("Lump", V(s, s, s), pos, cols[i % 3 + 1], M.Slate, rand)
-	end
+	b.lumpy("Truffle", at(-0.12, 0.4, -0.05), V(0.44, 0.4, 0.42), 0.14, dark)
 
-	-- felie care arată interiorul marmorat
-	local slice = at(0.52, 0.2, 0.18) * CFrame.Angles(0, rad(-30), rad(-15))
-	b.octagon("SliceRim", 0.2, 0.06, slice, cols[2], M.Slate)
-	b.octagon("SliceInside", 0.165, 0.065, slice, rgb(196, 168, 140))
-	for k, v in ipairs({ { -0.05, 25 }, { 0.04, -35 }, { 0.0, 80 } }) do
-		b.box("Vein", V(0.02, 0.22 - k * 0.03, 0.07), slice * at(v[1], 0, 0) * CFrame.Angles(0, 0, rad(v[2])), cols[1])
-	end
-
-	-- frunză de stejar
-	local leafCF = at(-0.5, 0.02, 0.22) * CFrame.Angles(0, rad(40), 0)
-	local oak = rgb(120, 150, 60)
-	b.box("OakLeaf", V(0.12, 0.03, 0.5), leafCF, oak, M.Grass)
-	for k, z in ipairs({ -0.14, 0.0, 0.14 }) do
-		b.box("OakLobe", V(0.36 - k * 0.07, 0.03, 0.1), leafCF * at(0, 0, z), oak, M.Grass)
-	end
+	-- bucată tăiată, cu interiorul vizibil
+	local cf = at(0.42, 0.24, 0.22) * CFrame.Angles(rad(-10), rad(35), rad(-8))
+	b.lumpy("Truffle", cf * at(0, 0, -0.16), V(0.25, 0.25, 0.14), 0.12, dark)
+	b.octagon("Rim", 0.25, 0.2, cf * at(0, 0, -0.1) * CFrame.Angles(0, 0, PI / 8), rim)
+	b.octagon("Inside", 0.2, 0.03, cf * at(0, 0, 0.005) * CFrame.Angles(0, 0, PI / 8), rgb(196, 140, 92))
+	b.octagon("InsideLight", 0.11, 0.03, cf * at(0, 0, 0.012), rgb(222, 174, 120))
 
 	return finalize(b)
 end
 
 local function buildFur()
-	local b = newItem("Fur")
-	local rand = rng(31)
-	local fur, furLight, furDark = rgb(170, 124, 84), rgb(222, 192, 150), rgb(130, 92, 60)
-	local strap, brass = rgb(80, 52, 32), rgb(212, 170, 70)
+	local b = newItem("Fur", 19)
+	b.jit = 0.06
+	local brown, brownD = rgb(150, 92, 50), rgb(116, 68, 36)
+	local tan, tanD = rgb(228, 194, 150), rgb(198, 160, 116)
 
-	-- blană rulată; straturile interioare ies puțin la capete și formează spirala
-	local roll = at(0, 0.3, 0) * CFrame.Angles(0, PI / 2, 0)
-	b.octagon("Roll", 0.3, 1.1, roll, fur, M.Fabric)
-	b.octagon("RollInner", 0.24, 1.12, roll * CFrame.Angles(0, 0, PI / 8), furLight, M.Fabric)
-	b.octagon("RollInner", 0.17, 1.14, roll, fur, M.Fabric)
-	b.octagon("RollInner", 0.1, 1.16, roll * CFrame.Angles(0, 0, PI / 8), furLight, M.Fabric)
-
-	for _, x in ipairs({ -0.3, 0.3 }) do
-		b.octagon("Strap", 0.315, 0.08, at(x, 0.3, 0) * CFrame.Angles(0, PI / 2, 0), strap, M.Leather)
-		b.box("Buckle", V(0.1, 0.05, 0.12), at(x, 0.63, 0), brass, M.Metal)
+	local function spikes(n, rb, yb, rt, yt, c1, c2, jt)
+		local d = PI / n * 1.25
+		for k = 0, n - 1 do
+			local a = k * 2 * PI / n + b.rand(-0.1, 0.1)
+			local tr = rt + b.rand(-jt, jt)
+			b.face("Fur",
+				V(rb * math.cos(a - d), yb, rb * math.sin(a - d)),
+				V(rb * math.cos(a + d), yb, rb * math.sin(a + d)),
+				V(tr * math.cos(a), yt + b.rand(-jt, jt), tr * math.sin(a)),
+				k % 2 == 0 and c1 or c2)
+		end
 	end
 
-	-- capătul blănii, întins în față, cu margine zimțată
-	b.box("Flap", V(1.0, 0.03, 0.35), at(0, 0.015, 0.38), fur, M.Fabric)
-	for k = 0, 4 do
-		b.wedge("FurEdge", V(0.03, 0.2, 0.12), at(-0.4 + k * 0.2, 0.015, 0.61) * CFrame.Angles(0, PI, 0) * CFrame.Angles(0, 0, PI / 2), fur, M.Fabric)
-	end
-
-	for k = 0, 3 do
-		b.chunk("Tuft", V(0.14, 0.12, 0.14), at(-0.36 + k * 0.24, 0.6, rand(-0.06, 0.06)), k % 2 == 0 and furDark or furLight, M.Fabric, rand)
-	end
-	for k = 0, 2 do
-		b.chunk("Tuft", V(0.12, 0.06, 0.12), at(-0.3 + k * 0.3, 0.035, 0.42), furDark, M.Fabric, rand, rad(20))
-	end
+	b.prism("Under", 0.3, 0.26, at(0, 0.24, 0), tan)
+	b.lumpy("Fur", at(0, 0.56, 0), V(0.42, 0.26, 0.42), 0.15, brown)
+	spikes(12, 0.32, 0.38, 0.42, 0.02, tan, tanD, 0.05)
+	spikes(10, 0.36, 0.62, 0.6, 0.36, brown, brownD, 0.05)
+	spikes(6, 0.18, 0.76, 0.26, 0.96, brown, brownD, 0.04)
 
 	return finalize(b)
 end
 
 local function buildClaw()
-	local b = newItem("Claw")
-	local rand = rng(41)
-	local dark, pale = rgb(64, 56, 52), rgb(236, 228, 208)
-	local leather, cord, furDark = rgb(110, 70, 40), rgb(206, 168, 116), rgb(84, 64, 52)
+	local b = newItem("Claw", 23)
+	b.jit = 0.04
+	local clawBase, clawTip = rgb(198, 162, 118), rgb(238, 216, 180)
+	local knuckle = rgb(122, 74, 44)
 
-	local root = at(-0.3, 0.12, 0) * CFrame.Angles(0, 0, rad(10))
-	local n = 8
-	b.sweep(root, 0.75, 115, n, function(i, t, cf, seg)
-		local w = 0.42 * (1 - t * 0.85)
-		local col = mix(dark, pale, t)
-		if i < n then
-			b.box("Claw", V(w, seg * 1.12, w * 0.55), cf, col)
-		else
-			-- vârf ascuțit: fața dreaptă pe exteriorul curbei
-			b.wedge("ClawTip", V(w * 0.55, seg * 1.3, w), cf * at(0, seg * 0.1, 0) * CFrame.Angles(0, -PI / 2, 0), col)
-		end
+	-- pornește din dreapta-sus, spre stânga, și se curbează în jos
+	local root = at(0.3, 0.55, 0) * CFrame.Angles(0, 0, rad(110)) * CFrame.Angles(0, PI, 0)
+	local lastCF, lastA, lastSeg
+	b.sweep(root, 0.95, 72, 7, function(_, t, cf, seg)
+		local a = 0.21 * (1 - t) ^ 0.8 + 0.02
+		b.prism("Claw", a, seg * 1.15, cf, b.vary(mix(clawBase, clawTip, t), 0.03))
+		lastCF, lastA, lastSeg = cf, a, seg
 	end)
+	b.lathe("ClawTip", lastCF * at(0, lastSeg * 0.5, 0), { { lastA / COS8, 0 }, { 0, 0.24 } }, 8, clawTip)
 
-	b.prism("Wrap", 0.23, 0.16, root * at(0, 0.06, 0), leather, M.Leather)
-	b.prism("WrapBand", 0.24, 0.04, root * at(0, 0.1, 0) * CFrame.Angles(0, PI / 8, 0), cord, M.Fabric)
-	b.chunk("Knuckle", V(0.36, 0.2, 0.3), root * at(0, -0.06, 0), furDark, M.Fabric, rand, rad(15))
-	b.box("Cord", V(0.2, 0.03, 0.03), root * at(-0.2, 0.0, 0.06) * CFrame.Angles(0, 0, rad(30)), cord, M.Fabric)
-	b.gem("Bead", 0.11, root * at(-0.3, -0.06, 0.06), rgb(200, 40, 40))
+	b.prism("Band", 0.245, 0.06, root * at(0, 0.03, 0), rgb(86, 52, 30))
+	b.lumpy("Knuckle", root * at(0, -0.14, 0), V(0.27, 0.24, 0.27), 0.12, knuckle)
 
 	return finalize(b)
 end
 
 local function buildScale()
-	local b = newItem("Scale")
-	local shine = { Reflectance = 0.15 }
+	local b = newItem("Scale", 29)
+	b.jit = 0.1
+	local verts = { V(0, 0.8, 0) }
+	for k = 0, 5 do
+		local a = k * PI / 3
+		verts[#verts + 1] = V(0.42 * math.cos(a), 0.22, 0.15 * math.sin(a))
+	end
+	for k = 0, 5 do
+		local a = k * PI / 3 + PI / 6
+		verts[#verts + 1] = V(0.34 * math.cos(a), -0.32, 0.12 * math.sin(a))
+	end
+	verts[#verts + 1] = V(0, -0.8, 0)
 
-	local function scale(cf, s, colA, colB, ridge)
-		b.octagon("Scale", 0.5 * s, 0.08 * s, cf * at(0, 0.15 * s, 0) * CFrame.Angles(0, 0, PI / 8), colA, M.SmoothPlastic, shine)
-		b.box("Scale", V(0.72 * s, 0.72 * s, 0.08 * s), cf * at(0, -0.1 * s, 0) * CFrame.Angles(0, 0, PI / 4), colA, M.SmoothPlastic, shine)
-		b.octagon("ScaleInner", 0.37 * s, 0.1 * s, cf * at(0, 0.15 * s, 0) * CFrame.Angles(0, 0, PI / 8), colB, M.SmoothPlastic, shine)
-		b.box("ScaleInner", V(0.53 * s, 0.53 * s, 0.1 * s), cf * at(0, -0.1 * s, 0) * CFrame.Angles(0, 0, PI / 4), colB, M.SmoothPlastic, shine)
-		b.box("Ridge", V(0.05 * s, 1.0 * s, 0.12 * s), cf * at(0, 0.02 * s, 0), ridge)
-		for _, sx in ipairs({ -1, 1 }) do
-			b.box("Rib", V(0.04 * s, 0.36 * s, 0.11 * s), cf * at(sx * 0.13 * s, 0.12 * s, 0) * CFrame.Angles(0, 0, rad(-40 * sx)), ridge)
-		end
+	local faces = {}
+	for k = 0, 5 do
+		local a1, a2 = 2 + k, 2 + (k + 1) % 6
+		local b1, b2 = 8 + k, 8 + (k + 1) % 6
+		table.insert(faces, { 1, a1, a2 })
+		table.insert(faces, { a1, a2, b1 })
+		table.insert(faces, { a2, b2, b1 })
+		table.insert(faces, { b1, b2, 14 })
 	end
 
-	scale(at(0.45, 0.42, -0.3) * CFrame.Angles(rad(-12), rad(-20), rad(-22)), 0.7, rgb(90, 14, 20), rgb(130, 22, 28), rgb(200, 90, 50))
-	scale(at(0, 0.62, 0) * CFrame.Angles(rad(-12), 0, 0), 1, rgb(120, 18, 26), rgb(190, 40, 36), rgb(255, 160, 70))
+	local cf = CFrame.Angles(0, rad(-20), rad(35))
+	local dark, light = rgb(176, 22, 26), rgb(238, 58, 48)
+	b.mesh("Scale", verts, faces, cf, function(p)
+		return mix(dark, light, math.clamp((p.Y + 0.7) / 1.4, 0, 1))
+	end, M.SmoothPlastic, { Reflectance = 0.08 })
 
 	return finalize(b)
 end
 
 local function buildShell()
-	local b = newItem("Shell")
-	local rim, core = rgb(78, 60, 34), rgb(52, 40, 24)
-	local plateA, plateB, scute = rgb(140, 112, 56), rgb(162, 132, 64), rgb(198, 168, 98)
+	local b = newItem("Shell", 31)
+	local tanA, tanB = rgb(232, 202, 158), rgb(210, 178, 130)
 
-	b.prism("Rim", 0.76, 0.08, at(0, 0.04, 0), rim, M.Slate)
-	b.prism("Core", 0.52, 0.3, at(0, 0.23, 0), core, M.Slate)
-	b.prism("Core", 0.3, 0.15, at(0, 0.455, 0), core, M.Slate)
-
-	-- dom din plăci înclinate, cu solzi mai deschiși în mijloc
-	b.ring("Plate", 8, 0.635, 0.23, V(0.5, 0.36, 0.07), plateA, M.Slate, rad(-29.5), 0, plateB)
-	b.ring("Scute", 8, 0.635, 0.23, V(0.32, 0.2, 0.08), scute, M.Slate, rad(-29.5), 0)
-	b.ring("Plate", 8, 0.415, 0.465, V(0.32, 0.32, 0.07), plateB, M.Slate, rad(-57.8), PI / 8, plateA)
-	b.ring("Scute", 8, 0.415, 0.465, V(0.18, 0.18, 0.08), scute, M.Slate, rad(-57.8), PI / 8)
-	b.prism("Top", 0.3, 0.07, at(0, 0.55, 0), plateA, M.Slate)
-	b.prism("TopScute", 0.18, 0.08, at(0, 0.555, 0) * CFrame.Angles(0, PI / 8, 0), scute, M.Slate)
-
-	for _, z in ipairs({ -0.15, 0, 0.15 }) do
-		b.box("Spike", V(0.12, 0.12, 0.12), at(0, 0.6, z) * CFrame.Angles(PI / 4, 0, PI / 4), rim, M.Slate)
+	-- tub octogonal pe o spirală logaritmică (ca o cochilie de melc / amonit)
+	local k, th0, th1, N = 0.24, 0.5 * PI, 2.25 * PI, 14
+	local rEnd, c = 0.42, 0.72
+	local r0 = rEnd / math.exp(k * th1)
+	local root = CFrame.Angles(0, rad(-25), rad(200))
+	local function P(th)
+		local r = r0 * math.exp(k * th)
+		return V(r * math.cos(th), r * math.sin(th), 0), r
 	end
+
+	local lastCF, lastR
+	for i = 1, N do
+		local pa, ra = P(th0 + (th1 - th0) * (i - 1) / N)
+		local pb, rb = P(th0 + (th1 - th0) * i / N)
+		local y = (pb - pa).Unit
+		local z = V(0, 0, 1)
+		local cf = root * CFrame.fromMatrix((pa + pb) / 2, y:Cross(z), y, z)
+		-- segmentele alternează rotația cu 22.5°, ca să apară nervurile
+		b.prism("Shell", c * (ra + rb) / 2, (pb - pa).Magnitude * 1.25, cf * CFrame.Angles(0, (i % 2) * PI / 8, 0), i % 2 == 0 and tanA or tanB)
+		lastCF, lastR = cf * at(0, (pb - pa).Magnitude * 0.6, 0), rb
+	end
+	b.prism("Opening", c * lastR * 0.8, 0.04, lastCF, rgb(150, 108, 68))
+	b.lathe("Spire", root * at(0, 0, 0.04) * VERT, { { 0.17, 0 }, { 0, 0.28 } }, 8, rgb(220, 188, 140))
 
 	return finalize(b)
 end
 
 local function buildHorn()
-	local b = newItem("Horn")
-	local base, mid, tip = rgb(84, 64, 50), rgb(176, 150, 116), rgb(244, 236, 214)
-	local gold = rgb(232, 186, 72)
+	local b = newItem("Horn", 37)
+	local tip, mid = rgb(244, 234, 210), rgb(212, 180, 134)
 
-	local root = CFrame.Angles(0, rad(-25), rad(15))
-	local n = 9
-	b.sweep(root, 0.8, 120, n, function(i, t, cf, seg)
-		local a = 0.24 * (1 - t * 0.82)
-		local col = t < 0.5 and mix(base, mid, t * 2) or mix(mid, tip, (t - 0.5) * 2)
-		b.prism("Horn", a, seg * 1.12, cf, col)
-		if i == 2 then
-			b.prism("GoldBand", a * 1.12, seg * 0.35, cf, gold, M.Metal)
-			b.box("Gem", V(0.08, 0.08, 0.04), cf * at(0, 0, a * 1.12) * CFrame.Angles(0, 0, PI / 4), rgb(60, 180, 255), M.Neon)
-		elseif i % 2 == 0 and i < n then
-			b.prism("Ridge", a * 1.06, seg * 0.16, cf * at(0, seg * 0.5, 0), mix(col, base, 0.35))
+	-- semilună: subțire la ambele capete, cea mai groasă spre baza din dreapta-jos
+	local root = at(0.3, 0.95, 0) * CFrame.Angles(0, 0, rad(200))
+	b.sweep(root, 0.52, 190, 11, function(i, t, cf, seg)
+		local a = math.max(0.03, 0.2 * math.sin(PI * t ^ 1.5))
+		local col = t < 0.6 and mix(tip, mid, t / 0.6) or mid
+		b.prism("Horn", a, seg * 1.18, cf, b.vary(col, 0.03))
+		if i == 8 then
+			b.prism("Band", a * 1.15, seg * 0.75, cf, rgb(122, 74, 40), M.Leather)
+			b.prism("BandEdge", a * 1.18, seg * 0.12, cf * at(0, seg * 0.3, 0), rgb(92, 54, 28), M.Leather)
 		end
 	end)
-	b.prism("Base", 0.26, 0.06, root * at(0, 0.02, 0), rgb(60, 46, 36))
 
 	return finalize(b)
 end
 
 local function buildGel()
-	local b = newItem("Gel")
-	local gel, core, bubble = rgb(140, 255, 110), rgb(210, 255, 170), rgb(240, 255, 230)
-	local gp = { Transparency = 0.3 }
+	local b = newItem("Gel", 41)
+	local cyan, green = rgb(60, 236, 216), rgb(84, 236, 120)
 
-	b.prism("Gel", 0.55, 0.12, at(0, 0.06, 0), gel, M.Glass, gp)
-	b.prism("Gel", 0.44, 0.22, at(0, 0.22, 0) * CFrame.Angles(0, PI / 8, 0), gel, M.Glass, gp)
-	b.prism("Gel", 0.3, 0.2, at(0, 0.42, 0), gel, M.Glass, gp)
-	b.prism("Gel", 0.16, 0.14, at(0, 0.58, 0) * CFrame.Angles(0, PI / 8, 0), gel, M.Glass, gp)
-	b.box("Gel", V(0.14, 0.14, 0.14), at(0, 0.68, 0) * CFrame.Angles(PI / 4, 0, PI / 4), gel, M.Glass, gp)
+	b.mound("Gel", CFrame.new(), V(0.02, 0.78, 0), {
+		{ 5, 0.2, 0.68, 0.1, 0.03, 0 },
+		{ 7, 0.42, 0.45, 0.1, 0.04, 0.3 },
+		{ 8, 0.54, 0.18, 0.08, 0.03, 0.1 },
+		{ 8, 0.7, 0.02, 0.18, 0, 0.4 },
+	}, 1, function(p)
+		return mix(green, cyan, math.clamp(p.Y / 0.6, 0, 1))
+	end)
 
-	local corePart = b.gem("Core", 0.3, at(0, 0.26, 0), core, M.Neon)
-	for _, p in ipairs({ { 0.2, 0.1, 0.25 }, { -0.25, 0.16, 0.1 }, { 0.1, 0.45, -0.1 }, { -0.1, 0.3, -0.25 } }) do
-		b.box("Bubble", V(0.06, 0.06, 0.06), at(p[1], p[2], p[3]) * CFrame.Angles(PI / 4, PI / 4, 0), bubble, M.Neon)
-	end
-
-	b.prism("Droplet", 0.12, 0.05, at(0.68, 0.025, 0.15), gel, M.Glass, gp)
-	b.gem("Droplet", 0.1, at(-0.62, 0.05, -0.25), gel, M.Glass, gp)
-
-	b.light(corePart, gel, 7, 1.5)
+	b.fball("Droplet", 0.14, at(0.35, 1.0, 0.1), cyan, M.Neon)
+	b.fball("Droplet", 0.11, at(0.56, 0.82, 0.05), cyan, M.Neon)
+	b.light(b.handle, cyan, 8, 1.5)
 
 	return finalize(b)
 end
 
 local function buildAshes()
-	local b = newItem("Ashes")
-	local rand = rng(53)
-	local orange, yellow, red = rgb(255, 120, 30), rgb(255, 200, 60), rgb(200, 50, 30)
+	local b = newItem("Ashes", 43)
+	b.jit = 0.12
 
-	b.prism("Ash", 0.62, 0.1, at(0, 0.05, 0), rgb(84, 82, 84), M.Sand)
-	b.prism("Ash", 0.48, 0.12, at(0, 0.15, 0) * CFrame.Angles(0, PI / 8, 0), rgb(106, 104, 104), M.Sand)
-	b.prism("Ash", 0.34, 0.12, at(0, 0.26, 0), rgb(128, 126, 124), M.Sand)
-	local top = b.prism("Ash", 0.2, 0.1, at(0, 0.36, 0) * CFrame.Angles(0, PI / 8, 0), rgb(150, 148, 146), M.Sand)
-
-	local embers = { { 0.5, 0.1, 0.1 }, { -0.3, 0.21, 0.3 }, { 0.15, 0.32, -0.2 }, { -0.42, 0.1, -0.35 }, { 0.05, 0.42, 0.08 }, { 0.3, 0.21, -0.3 } }
-	for k, e in ipairs(embers) do
-		b.box("Ember", V(0.07, 0.07, 0.07), at(e[1], e[2], e[3]) * CFrame.Angles(PI / 4, PI / 4, 0), k % 2 == 0 and yellow or orange, M.Neon)
-	end
-	for _, p in ipairs({ { 0.55, 0.06, -0.2 }, { -0.5, 0.07, 0.25 }, { 0.2, 0.2, 0.38 } }) do
-		b.chunk("Char", V(0.18, 0.08, 0.12), at(p[1], p[2], p[3]), rgb(28, 24, 24), M.Slate, rand, rad(30))
-	end
-
-	-- pană de phoenix ieșind din cenușă
-	featherShape(b, at(0.08, 0.3, 0) * CFrame.Angles(rad(15), rad(30), rad(-25)), 0.85, function(i, n)
-		if i >= n - 1 then
-			return yellow
-		elseif i >= n - 4 then
-			return orange
-		end
-		return red
-	end, function(i, n)
-		return i >= n - 4 and M.Neon or M.SmoothPlastic
+	b.mound("Ash", CFrame.new(), V(0.05, 0.5, 0), {
+		{ 5, 0.24, 0.38, 0.2, 0.06, 0 },
+		{ 7, 0.48, 0.2, 0.15, 0.06, 0.2 },
+		{ 9, 0.7, 0.02, 0.12, 0, 0.1 },
+	}, 1.25, function(p)
+		return mix(rgb(54, 54, 58), rgb(106, 106, 112), math.clamp(p.Y / 0.45, 0, 1))
 	end)
 
-	b.particles(top, orange, red, 3, { rise = 1.5, size = 0.08, speedMin = 0.3, speedMax = 0.6, lifeMin = 1, lifeMax = 2 })
-	b.light(top, orange, 5, 1)
+	for k = 0, 6 do
+		local a = k * 2 * PI / 7 + b.rand(-0.3, 0.3)
+		local r = b.rand(0.88, 1.0)
+		local s = b.rand(0.06, 0.12)
+		b.chunk("Chip", V(s, s * 0.7, s), at(r * math.cos(a) * 1.15, s * 0.3, r * math.sin(a)), b.vary(rgb(52, 52, 56), 0.15))
+	end
 
 	return finalize(b)
 end
 
 local function buildStardust()
-	local b = newItem("Stardust")
-	local glass, gold = rgb(200, 225, 255), rgb(255, 214, 110)
-	local gp = { Transparency = 0.55 }
+	local b = newItem("Stardust", 47)
+	b.jit = 0.1
+	local deep, light, glow = rgb(80, 120, 236), rgb(176, 206, 255), rgb(120, 160, 255)
 
-	b.prism("Vial", 0.3, 0.55, at(0, 0.275, 0), glass, M.Glass, gp)
-	b.prism("Shoulder", 0.22, 0.08, at(0, 0.59, 0) * CFrame.Angles(0, PI / 8, 0), glass, M.Glass, gp)
-	b.prism("Neck", 0.12, 0.2, at(0, 0.73, 0), glass, M.Glass, gp)
-	b.prism("Lip", 0.15, 0.04, at(0, 0.84, 0), glass, M.Glass, gp)
-	b.prism("Cork", 0.11, 0.16, at(0, 0.9, 0), rgb(196, 150, 100), M.Wood)
-	b.prism("Twine", 0.13, 0.04, at(0, 0.7, 0), rgb(150, 110, 70), M.Fabric)
-	b.star("Star", 0.11, 0.04, at(0, 1.08, 0), gold, M.Neon)
+	b.mound("Dust", CFrame.new(), V(0, 0.62, 0), {
+		{ 6, 0.2, 0.42, 0.25, 0.06, 0 },
+		{ 8, 0.45, 0.2, 0.2, 0.05, 0.2 },
+		{ 10, 0.66, 0.02, 0.2, 0, 0.1 },
+	}, 1.15, function(p)
+		return mix(deep, light, math.clamp(p.Y / 0.55, 0, 1))
+	end)
 
-	-- straturi de praf strălucitor
-	b.prism("Dust", 0.26, 0.2, at(0, 0.12, 0), rgb(70, 90, 255), M.Neon)
-	b.prism("Dust", 0.26, 0.14, at(0, 0.29, 0), rgb(170, 90, 255), M.Neon)
-	local top = b.prism("Dust", 0.26, 0.1, at(0, 0.41, 0), gold, M.Neon)
-
-	for _, p in ipairs({ { 0.38, 0.02, 0.25 }, { -0.36, 0.02, 0.18 }, { 0.3, 0.02, -0.3 } }) do
-		b.box("Spill", V(0.05, 0.03, 0.05), at(p[1], p[2], p[3]) * CFrame.Angles(0, PI / 4, 0), rgb(170, 90, 255), M.Neon)
+	for k = 0, 9 do
+		local a = k * 2 * PI / 10 + b.rand(-0.2, 0.2)
+		local r = b.rand(0.62, 0.86)
+		local s = b.rand(0.05, 0.1)
+		b.chunk("Bit", V(s, s, s), at(r * math.cos(a) * 1.15, s * 0.4, r * math.sin(a)), b.vary(mix(deep, light, b.rand(0, 1)), 0.05), k % 3 == 0 and M.Neon or M.SmoothPlastic)
 	end
-	b.star("Star", 0.06, 0.03, at(0.42, 0.07, 0.05) * CFrame.Angles(0, rad(25), rad(20)), gold, M.Neon)
-	b.star("Star", 0.07, 0.03, at(-0.32, 0.95, 0.1) * CFrame.Angles(0, rad(-20), 0), rgb(255, 255, 255), M.Neon)
 
-	b.particles(top, gold, rgb(110, 130, 255), 5, { size = 0.1 })
-	b.light(top, rgb(150, 120, 255), 6, 1)
+	local sparkles = { { -0.3, 0.95, 0, 0.22 }, { 0.05, 1.22, 0, 0.26 }, { 0.36, 1.0, 0, 0.2 }, { 0.58, 0.66, 0.1, 0.14 }, { -0.55, 0.62, 0.1, 0.14 } }
+	for _, s in ipairs(sparkles) do
+		b.diamond("Sparkle", at(s[1], s[2], s[3]) * CFrame.Angles(0, b.rand(-0.5, 0.5), 0), s[4] * 0.55, s[4], glow, M.Neon)
+	end
+
+	b.particles(b.handle, glow, light, 4, { size = 0.1 })
+	b.light(b.handle, glow, 6, 1)
 
 	return finalize(b)
 end
 
 local function buildEssence()
-	local b = newItem("Essence")
-	local outer, inner, mote = rgb(255, 100, 200), rgb(255, 225, 245), rgb(255, 170, 230)
-	local gp = { Transparency = 0.35 }
+	local b = newItem("Essence", 53)
+	b.jit = 0.06
+	local purple, purpleL = rgb(128, 46, 220), rgb(178, 100, 255)
+	local gold, goldD = rgb(238, 182, 60), rgb(198, 140, 40)
+	local shine = { Reflectance = 0.15 }
 
-	-- flacără de suflet: cuburi rotite care se îngustează în sus
-	local layers = { { 0.5, 0.32, 0 }, { 0.4, 0.62, 0.04 }, { 0.3, 0.88, -0.03 }, { 0.2, 1.08, 0.03 }, { 0.12, 1.24, 0 } }
-	local corePart
-	for i, l in ipairs(layers) do
-		local cf = at(l[3], l[2], 0) * CFrame.Angles(PI / 4, rad(i * 20), PI / 4)
-		b.box("Flame", V(l[1], l[1], l[1]), cf, outer, M.Glass, gp)
-		if i <= 3 then
-			local s = l[1] * 0.55
-			local p = b.box("FlameCore", V(s, s, s), cf, inner, M.Neon)
-			corePart = corePart or p
-		end
-	end
-	for _, s in ipairs({ -1, 1 }) do
-		b.box("Flame", V(0.16, 0.16, 0.16), at(s * 0.26, 0.55, 0) * CFrame.Angles(PI / 4, 0, PI / 4), outer, M.Glass, gp)
-	end
+	b.lathe("Foot", CFrame.new(), { { 0.3, 0 }, { 0.14, 0.2 } }, 8, gold, M.SmoothPlastic, shine)
+	b.prism("FootBase", 0.3 * COS8, 0.03, at(0, 0.015, 0), goldD)
+	b.lathe("Bottle", CFrame.new(), { { 0.12, 0.19 }, { 0.44, 0.74 }, { 0.17, 1.0 } }, 8, function(p)
+		return p.Y < 0.74 and purple or purpleL
+	end, M.Glass, { Transparency = 0.25 })
+	local core = b.box("Core", V(0.36, 0.36, 0.36), at(0, 0.66, 0) * CFrame.Angles(PI / 4, PI / 4, 0), rgb(200, 130, 255), M.Neon)
+	b.prism("Neck", 0.13, 0.12, at(0, 1.06, 0), purpleL, M.Glass, { Transparency = 0.3 })
+	b.prism("Collar", 0.17, 0.06, at(0, 1.15, 0), gold, M.SmoothPlastic, shine)
+	b.lathe("Stopper", CFrame.new(), { { 0, 1.17 }, { 0.16, 1.3 }, { 0, 1.5 } }, 8, gold, M.SmoothPlastic, shine)
 
-	for k = 0, 5 do
-		local a = k * PI / 3
-		b.box("Mote", V(0.06, 0.06, 0.06), at(0.5 * math.cos(a), 0.35 + 0.1 * k, 0.5 * math.sin(a)) * CFrame.Angles(PI / 4, PI / 4, 0), mote, M.Neon)
-	end
-
-	b.light(corePart, outer, 9, 1.8)
-	b.particles(corePart, outer, inner, 6, { rise = 1, size = 0.12 })
+	b.light(core, purpleL, 8, 1.6)
+	b.particles(core, purpleL, rgb(255, 200, 255), 3, { rise = 0.8, size = 0.1 })
 
 	return finalize(b)
 end
 
 local function buildShard()
-	local b = newItem("Shard")
-	local rand = rng(97)
-	local crystal, core, light = rgb(110, 60, 255), rgb(205, 165, 255), rgb(150, 110, 255)
-	local rock, rock2 = rgb(42, 36, 58), rgb(58, 50, 78)
-	local gp = { Transparency = 0.2, Reflectance = 0.1 }
+	local b = newItem("Shard", 59)
+	b.jit = 0.08
+	local blue, purple = rgb(70, 130, 255), rgb(190, 80, 255)
+	local shine = { Reflectance = 0.1 }
 
-	b.chunk("Rock", V(0.9, 0.3, 0.75), at(0, 0.12, 0), rock, M.Slate, rand, rad(12))
-	b.chunk("Rock", V(0.45, 0.3, 0.4), at(0.38, 0.1, 0.2), rock2, M.Slate, rand, rad(20))
-	b.chunk("Rock", V(0.4, 0.25, 0.45), at(-0.4, 0.08, -0.15), rock2, M.Slate, rand, rad(20))
+	local function paint(p)
+		local c = mix(blue, purple, math.clamp((p.X + 0.35) / 0.7, 0, 1))
+		return mix(c, rgb(235, 220, 255), math.clamp((p.Y - 1.3) / 0.6, 0, 1) * 0.35)
+	end
+	b.lathe("Crystal", at(0, 0.9, 0) * CFrame.Angles(0, rad(20), rad(-10)), { { 0, -0.85 }, { 0.26, -0.45 }, { 0.33, 0.4 }, { 0, 0.95 } }, 6, paint, M.SmoothPlastic, shine)
 
-	local mainCF = at(0, 0.15, 0) * CFrame.Angles(rad(6), 0, rad(-8))
-	local main = b.crystal("Crystal", 0.36, 0.95, 0.3, mainCF, crystal, M.Glass, gp)
-	b.crystal("CrystalCore", 0.16, 0.85, 0.16, mainCF * at(0, 0.05, 0), core, M.Neon)
-	b.crystal("Crystal", 0.22, 0.5, 0.18, at(0.28, 0.15, 0.1) * CFrame.Angles(rad(-10), rad(20), rad(-35)), crystal, M.Glass, gp)
-	b.crystal("Crystal", 0.18, 0.4, 0.15, at(-0.25, 0.15, -0.05) * CFrame.Angles(rad(15), rad(-10), rad(32)), crystal, M.Glass, gp)
-	b.crystal("Crystal", 0.14, 0.28, 0.12, at(-0.1, 0.18, 0.28) * CFrame.Angles(rad(35), 0, rad(10)), light, M.Neon)
-
-	for _, s in ipairs({ { 0.55, 1.0, 0.1, 0.07 }, { -0.5, 0.8, 0, 0.06 }, { 0.35, 1.38, -0.1, 0.05 } }) do
-		b.star("Star", s[4], 0.03, at(s[1], s[2], s[3]) * CFrame.Angles(0, rad(30), 0), rgb(255, 255, 255), M.Neon)
+	local small = {
+		{ -0.58, 1.15, 0.05, 20, 0.2 },
+		{ 0.58, 1.0, 0.1, -25, 0.18 },
+		{ -0.48, 0.45, 0.15, -15, 0.13 },
+		{ 0.44, 0.38, 0.1, 30, 0.12 },
+	}
+	for _, s in ipairs(small) do
+		local h = s[5]
+		b.lathe("Mini", at(s[1], s[2], s[3]) * CFrame.Angles(0, b.rand(0, PI), rad(s[4])), { { 0, -h }, { h * 0.45, 0 }, { 0, h } }, 4, rgb(150, 70, 255), M.SmoothPlastic, shine)
 	end
 
-	b.light(main, crystal, 12, 2)
-	b.particles(main, light, rgb(110, 230, 255), 8)
+	b.light(b.handle, rgb(140, 110, 255), 12, 2)
+	b.particles(b.handle, rgb(150, 120, 255), rgb(110, 230, 255), 6)
 
 	return finalize(b)
 end
